@@ -24,7 +24,8 @@ interface CallOptions {
 }
 
 export async function call<T>(path: string, opts: CallOptions = {}): Promise<T> {
-  const url = new URL(`/api${path}`, window.location.origin);
+  const API_BASE = import.meta.env.VITE_API_TARGET || "https://emman-reading-room.onrender.com";
+const url = new URL(`/api${path}`, API_BASE);
   for (const [key, value] of Object.entries(opts.query ?? {})) {
     if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
   }
