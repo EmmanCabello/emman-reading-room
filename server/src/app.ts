@@ -19,14 +19,21 @@ export function createApp() {
   app.use(
     cors({
       origin: (origin, cb) => {
-        // Allow same-origin tools, the web client, and native apps (no Origin header).
-        if (!origin || env.clientOrigins.includes(origin) || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+        const allowedOrigins = [
+          ...env.clientOrigins,
+          "https://emman-reading-room-9ibqrhfr9-emmancabello.vercel.app",
+          "https://emman-reading-room.vercel.app",
+          "http://localhost:5173"
+        ];
+        if (!origin || allowedOrigins.includes(origin)) {
           return cb(null, true);
         }
         cb(null, false);
-      }
+      },
+      credentials: true,
     })
   );
+  
   app.use(express.json({ limit: "64kb" }));
   app.use(identifyVisitor);
 
