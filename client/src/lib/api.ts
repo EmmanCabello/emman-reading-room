@@ -25,12 +25,14 @@ interface CallOptions {
 
 export async function call<T>(path: string, opts: CallOptions = {}): Promise<T> {
   const API_BASE = (import.meta.env.VITE_API_TARGET || "https://emman-reading-room.onrender.com").replace(/\/$/, "");
-const cleanPath = path.startsWith("/") ? path : `/${path}`;
-const fullPath = cleanPath.startsWith("/api") ? cleanPath : `/api${cleanPath}`;
-const url = new URL(fullPath, API_BASE);
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  const fullPath = cleanPath.startsWith("/api") ? cleanPath : `/api${cleanPath}`;
+  const url = new URL(fullPath, API_BASE);
+
   for (const [key, value] of Object.entries(opts.query ?? {})) {
     if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
   }
+
   const token = sessionStore.read();
   const res = await fetch(url, {
     method: opts.method ?? "GET",
@@ -40,16 +42,14 @@ const url = new URL(fullPath, API_BASE);
     },
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined
   });
+
   if (res.status === 204) return undefined as T;
   const payload = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const err = payload?.error ?? {};
-    throw new ApiError(res.status, err.code ?? "ERROR", err.message ?? "Request failed.", err);
-  }
-  return payload as T;
-}
+  if (res.ok) return payload as T;
 
-/** Open the short-lived card ticket URL so the browser saves the PDF. */
+  const err = payload?.error ?? {};
+  throw new ApiError(res.status, err.code ?? "ERROR", err.message ?? "Request failed.", err);
+}
 export async function triggerCardDownload(ticketUrl: string): Promise<void> {
   const link = document.createElement("a");
   link.href = ticketUrl;
