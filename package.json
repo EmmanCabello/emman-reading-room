@@ -1,0 +1,21 @@
+{
+  "name": "emman-reading-room",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Emman Reading Room - a public-domain research library with an Archival Research Curator agent.",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c green,blue \"npm run dev -w server\" \"npm run dev -w client\"",
+    "dev:phone": "npm --prefix phone run start",
+    "db:reset": "npm run db:reset -w server",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w client",
+    "build": "npm run build -w server && npm run build -w client",
+    "test": "npm run test -w server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
