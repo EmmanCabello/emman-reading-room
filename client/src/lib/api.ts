@@ -24,8 +24,10 @@ interface CallOptions {
 }
 
 export async function call<T>(path: string, opts: CallOptions = {}): Promise<T> {
-  const API_BASE = import.meta.env.VITE_API_TARGET || "https://emman-reading-room.onrender.com";
-const url = new URL(`/api${path}`, API_BASE);
+  const API_BASE = (import.meta.env.VITE_API_TARGET || "https://emman-reading-room.onrender.com").replace(/\/$/, "");
+const cleanPath = path.startsWith("/") ? path : `/${path}`;
+const fullPath = cleanPath.startsWith("/api") ? cleanPath : `/api${cleanPath}`;
+const url = new URL(fullPath, API_BASE);
   for (const [key, value] of Object.entries(opts.query ?? {})) {
     if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
   }
