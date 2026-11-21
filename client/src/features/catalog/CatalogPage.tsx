@@ -4,7 +4,6 @@ import { useCatalogSearch, type CatalogFilters } from "../../hooks/useCatalogSea
 import { useUserShelf } from "../../hooks/useUserShelf";
 import { WorkCard } from "../../shell/WorkCard";
 import { useClaimCard } from "./useClaimCard";
-import { SearchAutocomplete } from "./SearchAutoComplete";
 
 export function CatalogPage() {
   const [params, setParams] = useSearchParams();
@@ -48,7 +47,6 @@ export function CatalogPage() {
         <p className="muted">
           {totalWorks || "Hundreds of"} public-domain works. Claim a one-page bibliographic card for any title; the full texts live on Project Gutenberg.
         </p>
-        <SearchAutocomplete />
       </header>
 
       <div className="rooms" role="tablist" aria-label="Reading rooms">

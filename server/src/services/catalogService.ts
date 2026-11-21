@@ -201,6 +201,7 @@ interface Scored {
   work: Work;
   score: number;
   matched: number;
+  titleRank: number;
 }
 
 interface Hint {
@@ -208,29 +209,61 @@ interface Hint {
   stem: string;
 }
 
-function scoreWork(work: Work, tokens: string[], queryStems: string[], hints: Hint[][]): Scored {
+function scoreWork(
+  work: Work,
+  tokens: string[],
+  queryStems: string[],
+  hints: Hint[][],
+  normalizedQuery: string
+): Scored {
   const fields: Field[] = [
     makeField(work.title, 6, 4),
     makeField(work.author, 5, 3.5),
     makeField(work.summary, 1.5, 1),
     makeField(work.roomLabel, 1.5, 1)
   ];
+
+  const normalizedTitle = normalize(work.title);
+
+  // Direct title matches always receive priority.
+  let titleRank = 0;
+
+  if (normalizedQuery) {
+    if (normalizedTitle === normalizedQuery) {
+      titleRank = 4;
+    } else if (normalizedTitle.startsWith(normalizedQuery)) {
+      titleRank = 3;
+    } else if (normalizedTitle.includes(normalizedQuery)) {
+      titleRank = 2;
+    }
+  }
+
   let score = 0;
   let matched = 0;
 
   queryStems.forEach((needle, index) => {
     let best = 0;
+
     for (const field of fields) {
-      best = Math.max(best, matchWeight(field, tokens[index], needle));
+      best = Math.max(
+        best,
+        matchWeight(field, tokens[index], needle)
+      );
     }
+
     if (!best) {
       for (const hint of hints[index] ?? []) {
-        if (fields.some((field) => matchWeight(field, hint.raw, hint.stem) > 0)) {
+        if (
+          fields.some(
+            (field) => matchWeight(field, hint.raw, hint.stem) > 0
+          )
+        ) {
           best = 0.8;
           break;
         }
       }
     }
+
     if (best) {
       score += best;
       matched += 1;
@@ -240,59 +273,115 @@ function scoreWork(work: Work, tokens: string[], queryStems: string[], hints: Hi
   if (containsPhrase(fields[0].stems, queryStems)) score += 5;
   if (containsPhrase(fields[1].stems, queryStems)) score += 3;
 
-  return { work, score, matched };
+  return { work, score, matched, titleRank };
 }
+
 
 export async function searchWorks(params: SearchParams): Promise<SearchResult> {
   const page = Math.max(1, params.page ?? 1);
   const pageSize = Math.min(60, Math.max(1, params.pageSize ?? 24));
 
+  // Retrieve works, applying room and author filters.
   const rows = await db.work.findMany({
     where: {
       ...(params.room ? { roomKey: params.room } : {}),
-      ...(params.author ? { author: { contains: params.author, mode: "insensitive" } } : {})
+      ...(params.author
+        ? { author: { contains: params.author, mode: "insensitive" } }
+        : {})
     }
   });
 
+  // Normalize the search query.
   const query = params.q?.trim() ?? "";
+  const normalizedQuery = normalize(query);
   const tokens = [...new Set(tokenize(query))];
   const queryStems = tokens.map(stem);
+
+  // Generate topical hints.
   const hints = tokens.map((token) =>
     (TOPIC_HINTS[token] ?? [])
       .flatMap((hint) => tokenize(hint))
       .map((raw) => ({ raw, stem: stem(raw) }))
   );
+
   let ranked: Scored[];
 
-  if (!tokens.length) {
-    ranked = rows.map((work) => ({ work, score: 0, matched: 0 }));
+  if (!tokens.length && !normalizedQuery) {
+    ranked = rows.map((work) => ({
+      work,
+      score: 0,
+      matched: 0,
+      titleRank: 0
+    }));
   } else {
-    const scored = rows.map((work) => scoreWork(work, tokens, queryStems, hints));
-    const strict = scored.filter((s) => s.matched === queryStems.length);
-    // Prefer works that hit every word; only widen to partial matches when nothing covers the whole query.
-    const pool = strict.length
-      ? strict
-      : scored.filter((s) => s.matched >= Math.max(1, Math.ceil(queryStems.length / 2)));
+    const scored = rows.map((work) =>
+      scoreWork(work, tokens, queryStems, hints, normalizedQuery)
+    );
+
+    // Identify works matching every search token.
+    const strict = scored.filter(
+      (s) => s.matched === queryStems.length
+    );
+
+    // Always retain direct title matches.
+    const pool = scored.filter((s) => {
+      if (s.titleRank > 0) return true;
+
+      if (strict.length) {
+        return s.matched === queryStems.length;
+      }
+
+      return s.matched >= Math.max(1, Math.ceil(queryStems.length / 2));
+    });
+
+    // Prioritize direct title matches over other fields.
     ranked = pool.sort(
-      (a, b) => b.matched - a.matched || b.score - a.score || a.work.title.localeCompare(b.work.title)
+      (a, b) =>
+        b.titleRank - a.titleRank ||
+        b.matched - a.matched ||
+        b.score - a.score ||
+        a.work.title.localeCompare(b.work.title)
     );
   }
 
+  // Apply the requested sorting option.
   const sort = params.sort ?? (tokens.length ? "relevance" : "title");
-  if (sort === "title") ranked.sort((a, b) => a.work.title.localeCompare(b.work.title));
-  if (sort === "year") ranked.sort((a, b) => a.work.year - b.work.year || a.work.title.localeCompare(b.work.title));
-  if (sort === "author") {
-    ranked.sort((a, b) => a.work.author.localeCompare(b.work.author) || a.work.year - b.work.year);
+
+  if (sort === "title") {
+    ranked.sort((a, b) =>
+      a.work.title.localeCompare(b.work.title)
+    );
   }
 
+  if (sort === "year") {
+    ranked.sort(
+      (a, b) =>
+        a.work.year - b.work.year ||
+        a.work.title.localeCompare(b.work.title)
+    );
+  }
+
+  if (sort === "author") {
+    ranked.sort(
+      (a, b) =>
+        a.work.author.localeCompare(b.work.author) ||
+        a.work.year - b.work.year
+    );
+  }
+
+  // Paginate the ranked results.
   const start = (page - 1) * pageSize;
+
   return {
-    items: ranked.slice(start, start + pageSize).map((r) => presentWork(r.work)),
+    items: ranked
+      .slice(start, start + pageSize)
+      .map((r) => presentWork(r.work)),
     total: ranked.length,
     page,
     pageSize
   };
 }
+
 
 export async function getWork(id: number): Promise<PublicWork | null> {
   const row = await db.work.findUnique({ where: { id } });
