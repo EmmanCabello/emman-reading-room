@@ -3,42 +3,40 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
 model Patron {
-  id           String   @id @default(cuid())
-  email        String   @unique
+  id           String      @id @default(cuid())
+  email        String      @unique
   displayName  String
   passwordHash String
-  role         String   @default("reader") // "reader" | "admin"
-  createdAt    DateTime @default(now())
-
-  retrievals  Retrieval[]
-  shelfItems  ShelfItem[]
-  pins        Pin[]
-  proposals   Proposal[]
+  role         String      @default("reader")
+  createdAt    DateTime    @default(now())
+  pins         Pin[]
+  proposals    Proposal[]
+  retrievals   Retrieval[]
+  shelfItems   ShelfItem[]
 }
 
 model Work {
-  id          Int      @id @default(autoincrement())
-  slug        String   @unique
-  title       String
-  author      String
-  authorLife  String   @default("")
-  year        Int
-  summary     String
-  roomKey     String
-  roomLabel   String
-  gutenbergId Int?
-  createdAt   DateTime @default(now())
-
-  retrievals      Retrieval[]
+  id              Int              @id @default(autoincrement())
+  slug            String           @unique
+  title           String
+  author          String
+  authorLife      String           @default("")
+  year            Int
+  summary         String
+  roomKey         String
+  roomLabel       String
+  gutenbergId     Int?
+  createdAt       DateTime         @default(now())
   guestRetrievals GuestRetrieval[]
-  shelfItems      ShelfItem[]
   pins            Pin[]
+  retrievals      Retrieval[]
+  shelfItems      ShelfItem[]
 
   @@index([roomKey])
   @@index([author])
@@ -50,9 +48,8 @@ model Retrieval {
   patronId  String
   workId    Int
   createdAt DateTime @default(now())
-
-  patron Patron @relation(fields: [patronId], references: [id], onDelete: Cascade)
-  work   Work   @relation(fields: [workId], references: [id], onDelete: Cascade)
+  patron    Patron   @relation(fields: [patronId], references: [id], onDelete: Cascade)
+  work      Work     @relation(fields: [workId], references: [id], onDelete: Cascade)
 
   @@unique([patronId, workId])
 }
@@ -63,8 +60,7 @@ model GuestRetrieval {
   ip        String
   workId    Int
   createdAt DateTime @default(now())
-
-  work Work @relation(fields: [workId], references: [id], onDelete: Cascade)
+  work      Work     @relation(fields: [workId], references: [id], onDelete: Cascade)
 
   @@unique([ip, workId])
   @@index([ip])
@@ -75,12 +71,11 @@ model ShelfItem {
   id        String   @id @default(cuid())
   patronId  String
   workId    Int
-  stage     String   @default("to-read") // "to-read" | "reading" | "finished"
+  stage     String   @default("to-read")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  patron Patron @relation(fields: [patronId], references: [id], onDelete: Cascade)
-  work   Work   @relation(fields: [workId], references: [id], onDelete: Cascade)
+  patron    Patron   @relation(fields: [patronId], references: [id], onDelete: Cascade)
+  work      Work     @relation(fields: [workId], references: [id], onDelete: Cascade)
 
   @@unique([patronId, workId])
 }
@@ -92,9 +87,8 @@ model Pin {
   workId    Int
   locator   String   @default("")
   createdAt DateTime @default(now())
-
-  patron Patron @relation(fields: [patronId], references: [id], onDelete: Cascade)
-  work   Work   @relation(fields: [workId], references: [id], onDelete: Cascade)
+  patron    Patron   @relation(fields: [patronId], references: [id], onDelete: Cascade)
+  work      Work     @relation(fields: [workId], references: [id], onDelete: Cascade)
 
   @@index([patronId])
 }
@@ -103,10 +97,9 @@ model Pin {
 model Proposal {
   id        String   @id @default(cuid())
   patronId  String
-  workIds   String // JSON array of Work ids
+  workIds   String
   stage     String   @default("to-read")
-  state     String   @default("pending") // "pending" | "confirmed" | "dismissed"
+  state     String   @default("pending")
   createdAt DateTime @default(now())
-
-  patron Patron @relation(fields: [patronId], references: [id], onDelete: Cascade)
+  patron    Patron   @relation(fields: [patronId], references: [id], onDelete: Cascade)
 }
