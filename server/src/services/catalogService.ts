@@ -127,21 +127,74 @@ const TOPIC_HINTS: Record<string, string[]> = {
   machine: ["engine", "invention", "mechanical"]
 };
 
-export function tokenize(text: string): string[] {
+function normalize(text: string): string {
   return text
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/['’]s\b/g, "")
-    .split(/[^a-z0-9]+/)
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+export function tokenize(text: string): string[] {
+  return normalize(text)
+    .split(" ")
     .filter((w) => w.length > 1 && !FILLER.has(w));
 }
 
 function stem(word: string): string {
-  if (word.length > 5 && word.endsWith("ies")) return word.slice(0, -3);
-  if (word.length > 4 && word.endsWith("es")) return word.slice(0, -2);
-  if (word.length > 3 && word.endsWith("s")) return word.slice(0, -1);
+  if (word.length > 4 && word.endsWith("ies")) return `${word.slice(0, -3)}y`;
+  if (word.length > 4 && word.endsWith("es")) return word.slice(0, -1);
+  if (word.length > 3 && word.endsWith("s") && !word.endsWith("ss")) return word.slice(0, -1);
   return word;
+}
+
+/** Short needles would match too many unrelated words ("mar" -> "marco", "war" -> "backward"). */
+const MIN_PREFIX = 5;
+
+function wordsOf(text: string): string[] {
+  const clean = normalize(text);
+  return clean ? clean.split(" ") : [];
+}
+
+interface Field {
+  words: string[];
+  stems: string[];
+  exact: number;
+  prefix: number;
+}
+
+function makeField(text: string, exact: number, prefix: number): Field {
+  const words = wordsOf(text);
+  return { words, stems: words.map(stem), exact, prefix };
+}
+
+/** Raw word beats a plural/inflected match, which in turn beats a prefix match. */
+function matchWeight(field: Field, rawNeedle: string, stemNeedle: string): number {
+  let weight = 0;
+  for (let i = 0; i < field.words.length; i++) {
+    if (field.words[i] === rawNeedle) weight = Math.max(weight, field.exact);
+    else if (field.stems[i] === stemNeedle) weight = Math.max(weight, field.exact - 0.5);
+  }
+  if (!weight && stemNeedle.length >= MIN_PREFIX) {
+    for (const word of field.stems) {
+      if (word.startsWith(stemNeedle)) {
+        weight = field.prefix;
+        break;
+      }
+    }
+  }
+  return weight;
+}
+
+function containsPhrase(fieldStems: string[], queryStems: string[]): boolean {
+  if (!queryStems.length) return false;
+  for (let start = 0; start + queryStems.length <= fieldStems.length; start++) {
+    if (queryStems.every((needle, offset) => fieldStems[start + offset] === needle)) return true;
+  }
+  return false;
 }
 
 interface Scored {
@@ -150,48 +203,43 @@ interface Scored {
   matched: number;
 }
 
-function scoreWork(work: Work, tokens: string[], phrase: string): Scored {
-  const title = work.title.toLowerCase();
-  const author = work.author.toLowerCase();
-  const summary = work.summary.toLowerCase();
-  const room = work.roomLabel.toLowerCase();
+interface Hint {
+  raw: string;
+  stem: string;
+}
+
+function scoreWork(work: Work, tokens: string[], queryStems: string[], hints: Hint[][]): Scored {
+  const fields: Field[] = [
+    makeField(work.title, 6, 4),
+    makeField(work.author, 5, 3.5),
+    makeField(work.summary, 1.5, 1),
+    makeField(work.roomLabel, 1.5, 1)
+  ];
   let score = 0;
   let matched = 0;
 
-  if (phrase.length > 3 && title.includes(phrase)) score += 12;
-  if (phrase.length > 3 && author.includes(phrase)) score += 8;
-
-  for (const token of tokens) {
-    const base = stem(token);
-    const hints = TOPIC_HINTS[token] ?? [];
-    let hit = false;
-    if (title.includes(base)) {
-      score += 5;
-      hit = true;
+  queryStems.forEach((needle, index) => {
+    let best = 0;
+    for (const field of fields) {
+      best = Math.max(best, matchWeight(field, tokens[index], needle));
     }
-    if (author.includes(base)) {
-      score += 4;
-      hit = true;
-    }
-    if (summary.includes(base)) {
-      score += 1.5;
-      hit = true;
-    }
-    if (room.includes(base)) {
-      score += 1;
-      hit = true;
-    }
-    if (!hit) {
-      for (const hint of hints) {
-        if (title.includes(hint) || summary.includes(hint) || author.includes(hint)) {
-          score += 0.8;
-          hit = true;
+    if (!best) {
+      for (const hint of hints[index] ?? []) {
+        if (fields.some((field) => matchWeight(field, hint.raw, hint.stem) > 0)) {
+          best = 0.8;
           break;
         }
       }
     }
-    if (hit) matched += 1;
-  }
+    if (best) {
+      score += best;
+      matched += 1;
+    }
+  });
+
+  if (containsPhrase(fields[0].stems, queryStems)) score += 5;
+  if (containsPhrase(fields[1].stems, queryStems)) score += 3;
+
   return { work, score, matched };
 }
 
@@ -202,27 +250,37 @@ export async function searchWorks(params: SearchParams): Promise<SearchResult> {
   const rows = await db.work.findMany({
     where: {
       ...(params.room ? { roomKey: params.room } : {}),
-      ...(params.author ? { author: { contains: params.author } } : {})
+      ...(params.author ? { author: { contains: params.author, mode: "insensitive" } } : {})
     }
   });
 
   const query = params.q?.trim() ?? "";
-  const tokens = tokenize(query);
+  const tokens = [...new Set(tokenize(query))];
+  const queryStems = tokens.map(stem);
+  const hints = tokens.map((token) =>
+    (TOPIC_HINTS[token] ?? [])
+      .flatMap((hint) => tokenize(hint))
+      .map((raw) => ({ raw, stem: stem(raw) }))
+  );
   let ranked: Scored[];
 
   if (!tokens.length) {
     ranked = rows.map((work) => ({ work, score: 0, matched: 0 }));
   } else {
-    const phrase = query.toLowerCase();
-    const scored = rows.map((w) => scoreWork(w, tokens, phrase));
-    const threshold = Math.max(1, Math.ceil(tokens.length / 2));
-    ranked = scored.filter((s) => s.matched >= threshold);
-    ranked.sort((a, b) => b.matched - a.matched || b.score - a.score || a.work.title.localeCompare(b.work.title));
+    const scored = rows.map((work) => scoreWork(work, tokens, queryStems, hints));
+    const strict = scored.filter((s) => s.matched === queryStems.length);
+    // Prefer works that hit every word; only widen to partial matches when nothing covers the whole query.
+    const pool = strict.length
+      ? strict
+      : scored.filter((s) => s.matched >= Math.max(1, Math.ceil(queryStems.length / 2)));
+    ranked = pool.sort(
+      (a, b) => b.matched - a.matched || b.score - a.score || a.work.title.localeCompare(b.work.title)
+    );
   }
 
   const sort = params.sort ?? (tokens.length ? "relevance" : "title");
   if (sort === "title") ranked.sort((a, b) => a.work.title.localeCompare(b.work.title));
-  if (sort === "year") ranked.sort((a, b) => a.work.year - b.work.year);
+  if (sort === "year") ranked.sort((a, b) => a.work.year - b.work.year || a.work.title.localeCompare(b.work.title));
   if (sort === "author") {
     ranked.sort((a, b) => a.work.author.localeCompare(b.work.author) || a.work.year - b.work.year);
   }

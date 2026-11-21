@@ -64,8 +64,16 @@ loansRouter.get("/card/:ticket", async (req, res) => {
   const work = await getWork(claim.workId);
   if (!work) throw notFound("That title");
 
-  const pdf = await renderBibliographicCard(work, claim.holder);
-  const safeName = work.slug.slice(0, 60);
+  let pdf: Buffer;
+
+  try {
+    console.log("[PDF] Generating card for:", work.title);
+    pdf = await renderBibliographicCard(work, claim.holder);
+    console.log("[PDF] Generated successfully. Size:", pdf.length, "bytes");
+  } catch (error) {
+    console.error("[PDF GENERATION ERROR]", error);
+    throw error;
+  } const safeName = work.slug.slice(0, 60);
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", `attachment; filename="emman-card-${safeName}.pdf"`);
   res.setHeader("Content-Length", String(pdf.length));

@@ -50,11 +50,41 @@ export async function call<T>(path: string, opts: CallOptions = {}): Promise<T> 
   const err = payload?.error ?? {};
   throw new ApiError(res.status, err.code ?? "ERROR", err.message ?? "Request failed.", err);
 }
+
 export async function triggerCardDownload(ticketUrl: string): Promise<void> {
+  const API_BASE = (
+    import.meta.env.VITE_API_TARGET ||
+    "https://emman-reading-room.onrender.com"
+  ).replace(/\/+$/, "");
+
+  const downloadUrl = new URL(ticketUrl, API_BASE);
+
+  const token = sessionStore.read();
+
+  const response = await fetch(downloadUrl, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    }
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(
+      payload?.error?.message || "Could not download the PDF."
+    );
+  }
+
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+
   const link = document.createElement("a");
-  link.href = ticketUrl;
-  link.rel = "noopener";
+  link.href = objectUrl;
+  link.download = "emman-reading-room-card.pdf";
+
   document.body.appendChild(link);
   link.click();
   link.remove();
+
+  URL.revokeObjectURL(objectUrl);
 }
+

@@ -1,0 +1,112 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Patron {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  displayName  String
+  passwordHash String
+  role         String   @default("reader") // "reader" | "admin"
+  createdAt    DateTime @default(now())
+
+  retrievals  Retrieval[]
+  shelfItems  ShelfItem[]
+  pins        Pin[]
+  proposals   Proposal[]
+}
+
+model Work {
+  id          Int      @id @default(autoincrement())
+  slug        String   @unique
+  title       String
+  author      String
+  authorLife  String   @default("")
+  year        Int
+  summary     String
+  roomKey     String
+  roomLabel   String
+  gutenbergId Int?
+  createdAt   DateTime @default(now())
+
+  retrievals      Retrieval[]
+  guestRetrievals GuestRetrieval[]
+  shelfItems      ShelfItem[]
+  pins            Pin[]
+
+  @@index([roomKey])
+  @@index([author])
+}
+
+/// Distinct titles a signed-in reader has claimed as bibliographic cards.
+model Retrieval {
+  id        String   @id @default(cuid())
+  patronId  String
+  workId    Int
+  createdAt DateTime @default(now())
+
+  patron Patron @relation(fields: [patronId], references: [id], onDelete: Cascade)
+  work   Work   @relation(fields: [workId], references: [id], onDelete: Cascade)
+
+  @@unique([patronId, workId])
+}
+
+/// Distinct titles claimed by an anonymous visitor, tracked by IP address.
+model GuestRetrieval {
+  id        String   @id @default(cuid())
+  ip        String
+  workId    Int
+  createdAt DateTime @default(now())
+
+  work Work @relation(fields: [workId], references: [id], onDelete: Cascade)
+
+  @@unique([ip, workId])
+  @@index([ip])
+}
+
+/// "My Shelf": one row per title a reader keeps, shared by web and phone.
+model ShelfItem {
+  id        String   @id @default(cuid())
+  patronId  String
+  workId    Int
+  stage     String   @default("to-read") // "to-read" | "reading" | "finished"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  patron Patron @relation(fields: [patronId], references: [id], onDelete: Cascade)
+  work   Work   @relation(fields: [workId], references: [id], onDelete: Cascade)
+
+  @@unique([patronId, workId])
+}
+
+/// Bookmarks ("pins") with a free-text locator, e.g. "Book II, chapter 4".
+model Pin {
+  id        String   @id @default(cuid())
+  patronId  String
+  workId    Int
+  locator   String   @default("")
+  createdAt DateTime @default(now())
+
+  patron Patron @relation(fields: [patronId], references: [id], onDelete: Cascade)
+  work   Work   @relation(fields: [workId], references: [id], onDelete: Cascade)
+
+  @@index([patronId])
+}
+
+/// Additions staged by the Archival Research Curator, awaiting explicit confirmation.
+model Proposal {
+  id        String   @id @default(cuid())
+  patronId  String
+  workIds   String // JSON array of Work ids
+  stage     String   @default("to-read")
+  state     String   @default("pending") // "pending" | "confirmed" | "dismissed"
+  createdAt DateTime @default(now())
+
+  patron Patron @relation(fields: [patronId], references: [id], onDelete: Cascade)
+}
